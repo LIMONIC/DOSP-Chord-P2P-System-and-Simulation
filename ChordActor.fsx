@@ -23,7 +23,7 @@ let numNodes = fsi.CommandLineArgs.[1] |> int
 let numRequests = fsi.CommandLineArgs.[2] |> int
 
 (*/ Worker Actors
-    * stabilize(): it asks its successor for the successor¡¯s predecessor p, and decides whether p should be n¡¯s successor instead.
+    * stabilize(): it asks its successor for the successorï¿½ï¿½s predecessor p, and decides whether p should be nï¿½ï¿½s successor instead.
     * fix fingers(): to make sure its finger table entries are correct
     * check predecessor(): return current node's predecessor.
     * sendRequest(): send request
@@ -38,62 +38,52 @@ let numRequests = fsi.CommandLineArgs.[2] |> int
  /*)
 
 let localActor (mailbox:Actor<_>) = 
-    let actcount = System.Environment.ProcessorCount |> int64
-    let totalWorkers = actcount*125L
+    // Chrod ring initialization
 
-    printfn "ProcessorCount: %d" actcount
-    printfn "totalWorker: %d" totalWorkers
+    // let workersPool = 
+    //         [1L .. totalWorkers]
+    //         |> List.map(fun id -> spawn system (sprintf "Local_%d" id) worker)
 
-    let workersPool = 
-            [1L .. totalWorkers]
-            |> List.map(fun id -> spawn system (sprintf "Local_%d" id) worker)
-
-    let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/Local_%d" i)|]
-    let workerSystem = system.ActorOf(Props.Empty.WithRouter(Akka.Routing.RoundRobinGroup(workerenum)))
+    // let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/Local_%d" i)|]
+    // let workerSystem = system.ActorOf(Props.Empty.WithRouter(Akka.Routing.RoundRobinGroup(workerenum)))
+    let actorZero = spawn system "0" worker
     let mutable completedLocalWorkerNum = 0L
-    let mutable localActorNum = totalWorkers
-    let mutable taskSize = 1E6 |> int64
+    let mutable localActorNum = 0L
+    let mutable totJumpNum = 0L
 
 // Assign tasks to worker
     let rec loop () = actor {
         let! message = mailbox.Receive()
         // printfn $"[DEBUG]: Boss received {message}"
         match message with 
-        | TaskSize(size) -> taskSize <- size
-        | Input(n,k,t) -> 
-            // task init
-            let totalTasks = k - n
-            let requiredActorNum = 
-                if totalTasks % taskSize = 0L then totalTasks / taskSize else totalTasks / taskSize + 1L
-            let assignTasks (size, actors) = 
-                printfn $"[DEBUG]: Task size: {size}"
-                [1L..actors] |> List.iteri(fun i x -> 
-                    printfn $"- Initialize actor [{i + 1}/{actors}]: \t{int64 i * size + n} - {(int64 i + 1L)* size + n - 1L}"
-                    workerSystem <! Input(int64 i * size + n, size, t)
-                )
-            // assign tasks based on actor number
-            match requiredActorNum with
-            | _ when requiredActorNum > localActorNum ->
-                // resize taskSize to match actor number
-                if (totalTasks % localActorNum = 0L) then taskSize <- totalTasks / localActorNum else taskSize <- totalTasks / localActorNum + 1L
-                assignTasks(taskSize, localActorNum)
-            | _ when requiredActorNum = localActorNum -> 
-                assignTasks(taskSize, localActorNum)
-            | _ when requiredActorNum < localActorNum -> 
-                // reduce actor numbers
-                localActorNum <- requiredActorNum
-                if totalTasks < taskSize then assignTasks(totalTasks, requiredActorNum) else assignTasks(taskSize, requiredActorNum)
-            | _ -> failwith "[ERROR] wrong taskNum"
-            // printfn "End Input"
-        | Output (res) -> 
-            printerRef <! Output(res)
-        | Done(completeMsg) ->
+        | Input(n,r) -> 
+            printfn $"[INFO]: Num of Nodes: {n}\t Num of Request: {r}"
+            localActorNum <- n
+            // generate a list with random actor ids
+            let rnd = System.Random ()
+            let idList = [1L..(n - 1L)] |> List.sortBy(fun _ -> rnd.Next(1, int (n - 1L)) |> int64 )
+            let workersPool = idList |> List.map(fun id -> spawn system (sprintf "%d" id) worker)
+            let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/%d" i)|]
+            let workerSystem = system.ActorOf(Props.Empty.WithRouter(Akka.Routing.RoundRobinGroup(workerenum)))
+            // system.ActorOf()
+            // create chord network
+            // let url = "akka.tcp://Project2@localhost:8777/user/"
+            actorZero <! Init("create")
+            // join actors
+            [1L..(n - 1L)] |> List.iter(fun _ -> (workerSystem <! Init("join")))
+            printfn "[INFO]: All nodes have joined into the Chord network."
+            // Send finish msg
+            actorZero <! NetDone("Done");
+            [1L..(n - 1L)] |> List.iter(fun _ -> (workerSystem <! Init("Done")))
+            printfn "[INFO]: Start request."
+        | Report(numOfJumps) ->
             completedLocalWorkerNum <- completedLocalWorkerNum + 1L
-            printfn $"> {completeMsg} \tcompleted:{completedLocalWorkerNum} \ttotal:{localActorNum}" 
+            totJumpNum <- totJumpNum + numOfJumps
+            printfn $"[INFO]: \tcompleted:{completedLocalWorkerNum} \ttotal:{localActorNum} \tjump num: {numOfJumps}" 
             if completedLocalWorkerNum = localActorNum then
-                printerRef <! Done($"All tasks completed! local: {completedLocalWorkerNum}")
+                printfn $"All tasks completed! local: {completedLocalWorkerNum}"
                 mailbox.Context.System.Terminate() |> ignore
-        // | _ -> ()
+        | _ -> ()
         return! loop()
     }
     loop()
@@ -171,5 +161,11 @@ let createWorker id =
         )
 
 boss <! Input(numNodes, numRequests)
+let coordinator = spawn system "localActor" localActor
+// Input from Command Line
+let N = fsi.CommandLineArgs.[1] |> int64 // numNodes  
+let R = fsi.CommandLineArgs.[2] |> int64 // numRequests
+// client <! TaskSize(int64 1E6)
+coordinator <! Input(N, R)
 // Wait until all the actors has finished processing
 system.WhenTerminated.Wait()
