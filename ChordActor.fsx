@@ -26,10 +26,17 @@ let system = ActorSystem.Create("ChordModel", Configuration.defaultConfig())
 //         printfn "Absolute time = %dms" timer.ElapsedMilliseconds
 
 type Information = 
-    | TaskSize of (int64)
-    | Input of (int64*int64*int64)
-    | Output of (list<string * string>)
-    | Done of (string)
+    | Input of (int64*int64)
+    | NetDone of (string)
+    // | Key of (string)
+    | Request of (int*int*int) // target id, origin id, num of jump
+    | Response of (string) // target node response its address to origin
+    | Report of (int) // target node report num of jumps to boss
+
+
+
+    // | Output of (list<string * string>)
+    // | Done of (string)
 
 (*/ Print results and send them to server /*)
 let printer (mailbox:Actor<_>) =
