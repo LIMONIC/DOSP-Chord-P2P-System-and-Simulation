@@ -87,10 +87,11 @@ let createWorker id =
                             let nextWorker = getWorkerById fingerTable.Tail
                             nextWorker <! Request(targetId, originId, jumpNum + 1)
                         else //find range and the node it belong to
+                            let myboss = select @"akka://ChordModel/user/localActor" system
                             if targetId = id then 
                                 let origin = getWorkerById originId
                                 origin <! Response("succeed")
-                                boss <! Report(jumpNum)
+                                myboss <! Report(jumpNum)
                             else 
                                 let mutable plus = 2
                                 for i in fingerTable do
@@ -99,7 +100,7 @@ let createWorker id =
                                     if targetId >= startrange && targetId < endrange then 
                                         let origin = getWorkerById originId
                                         origin <! Response("succeed")
-                                        boss <! Report(jumpNum + 1)
+                                        myboss <! Report(jumpNum + 1)
                                     plus <- plus * 2
                     | Response(msg) ->
                         if msg = "succeed" then requestSuccess <- requestSuccess + 1
