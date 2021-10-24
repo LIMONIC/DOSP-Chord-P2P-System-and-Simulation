@@ -37,58 +37,7 @@ let numRequests = fsi.CommandLineArgs.[2] |> int
     * selfcheck -> when netDone turn selfcheck to false and stop stabilize, fix fingers, check predecessor and start request sending
  /*)
 
-let localActor (mailbox:Actor<_>) = 
-    // Chrod ring initialization
 
-    // let workersPool = 
-    //         [1L .. totalWorkers]
-    //         |> List.map(fun id -> spawn system (sprintf "Local_%d" id) worker)
-
-    // let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/Local_%d" i)|]
-    // let workerSystem = system.ActorOf(Props.Empty.WithRouter(Akka.Routing.RoundRobinGroup(workerenum)))
-    let actorZero = spawn system "0" worker
-    let mutable completedLocalWorkerNum = 0L
-    let mutable localActorNum = 0L
-    let mutable totJumpNum = 0L
-
-// Assign tasks to worker
-    let rec loop () = actor {
-        let! message = mailbox.Receive()
-        // printfn $"[DEBUG]: Boss received {message}"
-        match message with 
-        | Input(n,r) -> 
-            printfn $"[INFO]: Num of Nodes: {n}\t Num of Request: {r}"
-            localActorNum <- n
-            // generate a list with random actor ids
-            let rnd = System.Random ()
-            let idList = [1L..(n - 1L)] |> List.sortBy(fun _ -> rnd.Next(1, int (n - 1L)) |> int64 )
-            let workersPool = idList |> List.map(fun id -> spawn system (sprintf "%d" id) worker)
-            let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/%d" i)|]
-            let workerSystem = system.ActorOf(Props.Empty.WithRouter(Akka.Routing.RoundRobinGroup(workerenum)))
-            // system.ActorOf()
-            // create chord network
-            // let url = "akka.tcp://Project2@localhost:8777/user/"
-            actorZero <! Init("create")
-            // join actors
-            [1L..(n - 1L)] |> List.iter(fun _ -> (workerSystem <! Init("join")))
-            printfn "[INFO]: All nodes have joined into the Chord network."
-            // Send finish msg
-            actorZero <! NetDone("Done");
-            [1L..(n - 1L)] |> List.iter(fun _ -> (workerSystem <! Init("Done")))
-            printfn "[INFO]: Start request."
-        | Report(numOfJumps) ->
-            completedLocalWorkerNum <- completedLocalWorkerNum + 1L
-            totJumpNum <- totJumpNum + numOfJumps
-            printfn $"[INFO]: \tcompleted:{completedLocalWorkerNum} \ttotal:{localActorNum} \tjump num: {numOfJumps}" 
-            if completedLocalWorkerNum = localActorNum then
-                printfn $"All tasks completed! local: {completedLocalWorkerNum}"
-                mailbox.Context.System.Terminate() |> ignore
-        | _ -> ()
-        return! loop()
-    }
-    loop()
-
-let boss = spawn system "localActor" localActor
 
 let getWorkerById id =
     let actorPath = @"akka://ChordModel/user/worker" + string id
@@ -159,13 +108,58 @@ let createWorker id =
                 }
             loop()
         )
+let localActor (mailbox:Actor<_>) = 
+    // Chrod ring initialization
 
+    // let workersPool = 
+    //         [1L .. totalWorkers]
+    //         |> List.map(fun id -> spawn system (sprintf "Local_%d" id) worker)
+
+    // let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/Local_%d" i)|]
+    // let workerSystem = system.ActorOf(Props.Empty.WithRouter(Akka.Routing.RoundRobinGroup(workerenum)))
+    let actorZero = createWorker 0
+    let mutable completedLocalWorkerNum = 0
+    let mutable localActorNum = 0
+    let mutable totJumpNum = 0
+
+// Assign tasks to worker
+    let rec loop () = actor {
+        let! message = mailbox.Receive()
+        // printfn $"[DEBUG]: Boss received {message}"
+        match message with 
+        | Input(n,r) -> 
+            printfn $"[INFO]: Num of Nodes: {n}\t Num of Request: {r}"
+            localActorNum <- n
+            // generate a list with random actor ids
+            let rnd = System.Random ()
+            let idList = [1..(n - 1)] |> List.sortBy(fun _ -> rnd.Next(1, int (n - 1)) |> int )
+            let workersPool = idList |> List.map(fun id -> (createWorker id))
+            let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/%d" i)|]
+            let workerSystem = system.ActorOf(Props.Empty.WithRouter(Akka.Routing.RoundRobinGroup(workerenum)))
+            // system.ActorOf()
+            // create chord network
+            // let url = "akka.tcp://Project2@localhost:8777/user/"
+            actorZero <! Init("create")
+            // join actors
+            [1..(n - 1)] |> List.iter(fun _ -> (workerSystem <! Init("join")))
+            printfn "[INFO]: All nodes have joined into the Chord network."
+            // Send finish msg
+            actorZero <! NetDone("Done");
+            [1..(n - 1)] |> List.iter(fun _ -> (workerSystem <! Init("Done")))
+            printfn "[INFO]: Start request."
+        | Report(numOfJumps) ->
+            completedLocalWorkerNum <- completedLocalWorkerNum + 1
+            totJumpNum <- totJumpNum + numOfJumps
+            printfn $"[INFO]: \tcompleted:{completedLocalWorkerNum} \ttotal:{localActorNum} \tjump num: {numOfJumps}" 
+            if completedLocalWorkerNum = localActorNum then
+                printfn $"All tasks completed! local: {completedLocalWorkerNum}"
+                mailbox.Context.System.Terminate() |> ignore
+        | _ -> ()
+        return! loop()
+    }
+    loop()
+
+let boss = spawn system "localActor" localActor
 boss <! Input(numNodes, numRequests)
-let coordinator = spawn system "localActor" localActor
-// Input from Command Line
-let N = fsi.CommandLineArgs.[1] |> int64 // numNodes  
-let R = fsi.CommandLineArgs.[2] |> int64 // numRequests
-// client <! TaskSize(int64 1E6)
-coordinator <! Input(N, R)
-// Wait until all the actors has finished processing
+
 system.WhenTerminated.Wait()
