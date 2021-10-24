@@ -62,8 +62,8 @@ let localActor (mailbox:Actor<_>) =
             // generate a list with random actor ids
             let rnd = System.Random ()
             let idList = [1L..(n - 1L)] |> List.sortBy(fun _ -> rnd.Next(1, int (n - 1L)) |> int64 )
-            let workersPool = idList |> List.map(fun id -> spawn system (sprintf "%d" id) worker)
-            let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/%d" i)|]
+            let workersPool = idList |> List.map(fun id -> (createWorker id))
+            let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/worker%d" i)|]
             let workerSystem = system.ActorOf(Props.Empty.WithRouter(Akka.Routing.RoundRobinGroup(workerenum)))
             // system.ActorOf()
             // create chord network
