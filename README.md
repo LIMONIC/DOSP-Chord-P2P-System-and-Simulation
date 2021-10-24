@@ -3,7 +3,7 @@
 ## Actor initiation
 Use numbered ID for each actor for now. The ID can be changed to SHA-1 in the future. SHA-1 is good for clients that runs in different remote machines.
 
-## Chore ring initialization
+## Chrod ring initialization
 1. create the first node of the ring. Each node has a predecessor = null, successor = n;
 2. Join n nodes with the first node to increase the ring size -> method in boss
 3. Send message to each nodes indication the network is established
@@ -17,3 +17,5 @@ Use numbered ID for each actor for now. The ID can be changed to SHA-1 in the fu
 * predecessor
 * number of jumps -> notify boss if reach the end
 * List -> finger table
+
+* Request(): send request to find certain node 
