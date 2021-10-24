@@ -9,77 +9,33 @@ open Akka.FSharp
 open Akka.TestKit
 
 let system = ActorSystem.Create("ChordModel", Configuration.defaultConfig())
-// Use Actor system for naming
-// let system = System.create "my-system" (Configuration.load())
-
-// let measureTime f = 
-//     let proc = Process.GetCurrentProcess()
-//     let cpu_time_stamp = proc.TotalProcessorTime
-//     let timer = new Stopwatch()
-//     timer.Start()
-//     try
-//         f()
-//         timer.Stop()
-//     finally
-//         let cpu_time = (proc.TotalProcessorTime-cpu_time_stamp).TotalMilliseconds
-//         printfn "CPU time = %dms" (int64 cpu_time)
-//         printfn "Absolute time = %dms" timer.ElapsedMilliseconds
 
 type Information = 
-    | Input of (int64*int64)
+    | Input of (int*int)
     | NetDone of (string)
-    // | Key of (string)
     | Request of (int*int*int) // target id, origin id, num of jump
     | Response of (string) // target node response its address to origin
     | Report of (int) // target node report num of jumps to boss
+    | Init of (string)
 
-
-
-    // | Output of (list<string * string>)
-    // | Done of (string)
-
-(*/ Print results and send them to server /*)
-let printer (mailbox:Actor<_>) =
-    let mutable res = []
-    let rec loop () = actor {
-        let! message = mailbox.Receive()
-        // printfn "worker acotr receive msg: %A" message
-        let printRes resList = 
-            printfn "-------------RESULT-------------" 
-            resList |> List.iter(fun (str, sha256) -> printfn $"{str}\t{sha256}")
-            res <- []
-            printfn "--------------------------------" 
-        match message with
-        | Output(resList) -> 
-            if res.Length >= 100
-                then 
-                    res |> printRes
-                else
-                    res <- res @ resList
-        | Done(completeMsg) -> 
-            printfn $"[INFO][DONE]: {completeMsg}"
-            if res.Length > 0 then printRes res
-        | _ -> ()
-        return! loop()
-    }
-    loop()
-let printerRef = spawn system "printer" printer
+// Input from Command Line
+let numNodes = fsi.CommandLineArgs.[1] |> int
+let numRequests = fsi.CommandLineArgs.[2] |> int
 
 (*/ Worker Actors
-    Takes input from remoteActor, calculate results and pass the result to PostMan Actor
+    * stabilize(): it asks its successor for the successor¡¯s predecessor p, and decides whether p should be n¡¯s successor instead.
+    * fix fingers(): to make sure its finger table entries are correct
+    * check predecessor(): return current node's predecessor.
+    * sendRequest(): send request
+    * getResponse(): request succeed or not
+
+    ### Variables
+    * predecessor -> used in stabilize()
+    * successor -> used in stabilize()
+    * requestSuccess -> count the num of successful request
+    * List fingerTable -> finger table
+    * selfcheck -> when netDone turn selfcheck to false and stop stabilize, fix fingers, check predecessor and start request sending
  /*)
-let worker (mailbox:Actor<_>) =
-    let rec loop () = actor {
-        let! message = mailbox.Receive()
-        let outBox = mailbox.Sender()
-        let tid = Threading.Thread.CurrentThread.ManagedThreadId
-        match message with
-        | Input(start, k, zeros) -> 
-            printfn $"input: {message}"
-        | _ -> ()
-        return! loop()
-    }
-    loop()
 
 let localActor (mailbox:Actor<_>) = 
     let actcount = System.Environment.ProcessorCount |> int64
@@ -142,12 +98,78 @@ let localActor (mailbox:Actor<_>) =
     }
     loop()
 
-let client = spawn system "localActor" localActor
-// Input from Command Line
-let N = fsi.CommandLineArgs.[1] |> int64
-let K = fsi.CommandLineArgs.[2] |> int64
-let T = fsi.CommandLineArgs.[3] |> int64
-// client <! TaskSize(int64 1E6)
-client <! Input(N, K, T)
+let boss = spawn system "localActor" localActor
+
+let getWorkerById id =
+    let actorPath = @"akka://ChordModel/user/worker" + string id
+    select actorPath system
+
+let stabilize id =
+    printfn $"worker{id} self stabilize"
+    -1
+
+let checkPredecessor id = 
+    printfn $"worker{id} check its predecessor"
+    -1
+
+let fixFinger id fingertable= 
+    let newFing = fingertable
+    printfn $"worker{id} fix its fingertable"
+    newFing
+
+let createWorker id = 
+    spawn system ("worker" + id.ToString())
+        (fun mailbox ->
+            let rec loop() =
+                actor {
+                    let! message = mailbox.Receive()
+                    let outBox = mailbox.Sender()
+                    let mutable predecessor = -1
+                    let mutable successor = id;
+                    let mutable requestSuccess = 0
+                    let mutable fingerTable = List.Empty
+                    let mutable selfcheck = true;
+                    while selfcheck do 
+                        successor <- stabilize id
+                        predecessor <- checkPredecessor id 
+                        fingerTable <- fixFinger id fingerTable
+                    match message with
+                    | Init(msg) -> ()
+                    | NetDone(msg) -> 
+                        printfn $"net done. End stabilize fix check and start sending request"
+                        selfcheck <- false; 
+                        for i in 1 .. numRequests do
+                            let key = 0; //need to generate a random key within the chord
+                            let self = getWorkerById id
+                            self <! Request(key, id, 0) 
+                    | Request(targetId, originId, jumpNum) ->
+                        //check whether require next jump(targetid exceed the largest range of fingertable)
+                        if targetId > (id + 32) then 
+                            let nextWorker = getWorkerById fingerTable.Tail
+                            nextWorker <! Request(targetId, originId, jumpNum + 1)
+                        else //find range and the node it belong to
+                            if targetId = id then 
+                                let origin = getWorkerById originId
+                                origin <! Response("succeed")
+                                boss <! Report(jumpNum)
+                            else 
+                                let mutable plus = 2
+                                for i in fingerTable do
+                                    let startrange = (id + plus / 2)
+                                    let endrange = (id + plus)
+                                    if targetId >= startrange && targetId < endrange then 
+                                        let origin = getWorkerById originId
+                                        origin <! Response("succeed")
+                                        boss <! Report(jumpNum + 1)
+                                    plus <- plus * 2
+                    | Response(msg) ->
+                        if msg = "succeed" then requestSuccess <- requestSuccess + 1
+                    | _ -> ()
+                    return! loop()
+                }
+            loop()
+        )
+
+boss <! Input(numNodes, numRequests)
 // Wait until all the actors has finished processing
 system.WhenTerminated.Wait()
