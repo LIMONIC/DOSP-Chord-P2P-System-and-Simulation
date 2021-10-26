@@ -23,7 +23,7 @@ let numNodes = fsi.CommandLineArgs.[1] |> int
 let numRequests = fsi.CommandLineArgs.[2] |> int
 
 (*/ Worker Actors
-    * stabilize(): it asks its successor for the successor��s predecessor p, and decides whether p should be n��s successor instead.
+    * stabilize(): it asks its successor for the successor's predecessor p, and decides whether p should be n's successor instead.
     * fix fingers(): to make sure its finger table entries are correct
     * check predecessor(): return current node's predecessor.
     * sendRequest(): send request
@@ -36,8 +36,6 @@ let numRequests = fsi.CommandLineArgs.[2] |> int
     * List fingerTable -> finger table
     * selfcheck -> when netDone turn selfcheck to false and stop stabilize, fix fingers, check predecessor and start request sending
  /*)
-
-
 
 let getWorkerById id =
     let actorPath = @"akka://ChordModel/user/worker" + string id
@@ -109,6 +107,8 @@ let createWorker id =
                 }
             loop()
         )
+
+
 let localActor (mailbox:Actor<_>) = 
     // Chrod ring initialization
 
