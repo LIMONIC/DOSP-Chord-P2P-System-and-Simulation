@@ -21,6 +21,7 @@ type Information =
 // Input from Command Line
 let numNodes = fsi.CommandLineArgs.[1] |> int
 let numRequests = fsi.CommandLineArgs.[2] |> int
+let rnd = System.Random ()
 
 (*/ Worker Actors
     * stabilize(): it asks its successor for the successor��s predecessor p, and decides whether p should be n��s successor instead.
@@ -37,7 +38,8 @@ let numRequests = fsi.CommandLineArgs.[2] |> int
     * selfcheck -> when netDone turn selfcheck to false and stop stabilize, fix fingers, check predecessor and start request sending
  /*)
 
-
+let generateRandom lo hi =
+    rnd.Next(lo, hi)
 
 let getWorkerById id =
     let actorPath = @"akka://ChordModel/user/worker" + string id
@@ -68,7 +70,13 @@ let createWorker id =
                     let mutable requestSuccess = 0
                     let mutable fingerTable = List.Empty
                     let mutable selfcheck = true;
+
+                    let timer = new Timers.Timer(500.) // 500ms
+                    let waitTime = Async.AwaitEvent (timer.Elapsed) |> Async.Ignore
+                    timer.Start()
+                    // Methods for join and stablize 
                     while selfcheck do 
+                        Async.RunSynchronously waitTime // Wait some tiem before run following codes
                         successor <- stabilize id
                         predecessor <- checkPredecessor id 
                         fingerTable <- fixFinger id fingerTable
@@ -76,7 +84,7 @@ let createWorker id =
                     | Init(msg) -> ()
                     | NetDone(msg) -> 
                         printfn $"net done. End stabilize fix check and start sending request"
-                        selfcheck <- false; 
+                        selfcheck <- false; // Stop periodical method 
                         for i in 1 .. numRequests do
                             let key = 0; //need to generate a random key within the chord
                             let self = getWorkerById id
@@ -109,15 +117,8 @@ let createWorker id =
                 }
             loop()
         )
+
 let localActor (mailbox:Actor<_>) = 
-    // Chrod ring initialization
-
-    // let workersPool = 
-    //         [1L .. totalWorkers]
-    //         |> List.map(fun id -> spawn system (sprintf "Local_%d" id) worker)
-
-    // let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/Local_%d" i)|]
-    // let workerSystem = system.ActorOf(Props.Empty.WithRouter(Akka.Routing.RoundRobinGroup(workerenum)))
     let actorZero = createWorker 0
     let mutable completedLocalWorkerNum = 0
     let mutable localActorNum = 0
@@ -132,7 +133,6 @@ let localActor (mailbox:Actor<_>) =
             printfn $"[INFO]: Num of Nodes: {n}\t Num of Request: {r}"
             localActorNum <- n
             // generate a list with random actor ids
-            let rnd = System.Random ()
             let idList = [1..(n - 1)] |> List.sortBy(fun _ -> rnd.Next(1, int (n - 1)) |> int )
             let workersPool = idList |> List.map(fun id -> (createWorker id))
             let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/%d" i)|]
@@ -146,7 +146,7 @@ let localActor (mailbox:Actor<_>) =
             printfn "[INFO]: All nodes have joined into the Chord network."
             // Send finish msg
             actorZero <! NetDone("Done");
-            [1..(n - 1)] |> List.iter(fun _ -> (workerSystem <! Init("Done")))
+            [1..(n - 1)] |> List.iter(fun _ -> (workerSystem <! NetDone("Done")))
             printfn "[INFO]: Start request."
         | Report(numOfJumps) ->
             completedLocalWorkerNum <- completedLocalWorkerNum + 1
