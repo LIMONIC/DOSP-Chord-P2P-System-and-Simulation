@@ -152,6 +152,10 @@ let createWorker id =
                     | UpdateSuccessor(id) ->
                         successor <- id
                     | FindSuccessor(targetId) ->
+                        let suss = findSuccessor id
+                        outBox <! suss
+                  
+                        (*
                         let x = 2.0 ** 63.0
                         if float targetId > (float id + x) then  //if have to jump the end node of fingertable
                             let nextWorker = getWorkerById fingerTable.Tail
@@ -166,6 +170,8 @@ let createWorker id =
                             else 
                                 let nextWorker = findSuccessor id targetId fingerTable 
                                 nextWorker <! FindSuccessor(targetId)
+                        *)
+
                     | Request(targetId, originId, jumpNum) ->
                         //check whether require next jump(targetid exceed the largest range of fingertable)
                         let x = 2.0 ** 63.0
