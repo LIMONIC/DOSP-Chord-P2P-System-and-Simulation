@@ -13,15 +13,15 @@ let system = ActorSystem.Create("ChordModel", Configuration.defaultConfig())
 type Information = 
     | Input of (int*int)
     | NetDone of (string)
-    | Request of (int*int*int*bool) // target id, origin id, num of jump
+    | Request of (int*int*int) // target id, origin id, num of jump
     | Response of (string) // target node response its address to origin
     | Report of (int) // target node report num of jumps to boss
-    | Successor of (int) //get the successor id of current node
-    | AskSucessor of (bool) //ask for successor or predecessor (true for successor, false for predecessor)
+    | UpdateSuccessor of (int) //update the successor of current node
     | Create of (int)
     | Join of (int)
     | Notify of (int)
     | CheckPredecessor of (int)
+    | FindSuccessor of (int)
 
 
 let F_TABLE_SIZE = 32
@@ -56,14 +56,15 @@ let getWorkerById id =
     let actorPath = @"akka://ChordModel/user/worker" + string id
     select actorPath system
 
-let checkPredecessor id = 
-    printfn $"worker{id} check its predecessor"
-    -1
-
 let fixFinger id fingertable= 
     let newFing = fingertable
     printfn $"worker{id} fix its fingertable"
     newFing
+
+let checkWithin targetid startid endid =
+    let searchid = if startid < endid then targetid else targetid + 64
+    if searchid > startid && searchid <= endid then true else false
+        
 
 let createWorker id = 
     spawn system ("worker" + string id)
@@ -96,6 +97,28 @@ let createWorker id =
                             successor <- response
                             (getWorkerById successor) <! Notify(id)
 
+                    let findSuccessor id targetId fingerTable =
+                        let mutable plus = 2.0 ** 63.0
+                        let revFing = List.rev fingerTable
+                        let mutable endrange = float id + plus
+                        let mutable i = 0;
+                        let mutable searchId = targetId
+                        if endrange < 2.0 ** 64.0 || (searchId > id && float searchId < endrange) then 
+                            searchId <- targetId
+                        else searchId <- targetId + 64
+                        while (float searchId < endrange) do
+                            plus <- plus / 2.0
+                            endrange <- endrange + plus
+                            i <- i + 1
+                        getWorkerById revFing.[i]
+
+                    let fixFingerTable succ fingertable = 
+                        let succWorker = getWorkerById succ
+                        //random pick an worker to find successor
+                        let range = fst (List.unzip fingerTable)
+                        let rangeSuss = [for i in range -> (succWorker <? FindSuccessor(i))]
+                        List.zip range rangeSuss
+
                     timer.Start()
 
                     // Methods for join and stablize 
@@ -103,8 +126,7 @@ let createWorker id =
                         Async.RunSynchronously waitTime // Wait some tiem before run following codes
                         stabilize
                         // TODO: fixTable(); (Optional)check if predecessor is failed
-                        predecessor <- checkPredecessor id 
-                        fingerTable <- fixFinger id fingerTable
+                        fingerTable <- fixFinger successor fingerTable
 
                     match message with
                     | Create(currId) ->
@@ -126,42 +148,42 @@ let createWorker id =
                         for i in 1 .. numRequests do
                             let key = 0; //need to generate a random key within the chord
                             let self = getWorkerById id
-                            self <! Request(key, id, 0, true) 
-                    | Successor(id) ->
+                            self <! Request(key, id, 0) 
+                    | UpdateSuccessor(id) ->
                         successor <- id
-                    | AskSucessor(suc) ->
-                        if suc then outBox <! successor
-                        else outBox <! predecessor
-                    | Request(targetId, originId, jumpNum, lookup) ->
+                    | FindSuccessor(targetId) ->
+                        let x = 2.0 ** 63.0
+                        if float targetId > (float id + x) then  //if have to jump the end node of fingertable
+                            let nextWorker = getWorkerById fingerTable.Tail
+                            nextWorker <! FindSuccessor(targetId)
+                        else //find range and the node it belong to
+                            let myboss = select @"akka://ChordModel/user/localActor" system
+                            let lists = List.unzip fingerTable
+                            let range = fst lists
+                            let rangeSuss = snd lists
+                            if checkWithin targetId id successor then 
+                                outBox <! id
+                            else 
+                                let nextWorker = findSuccessor id targetId fingerTable 
+                                nextWorker <! FindSuccessor(targetId)
+                    | Request(targetId, originId, jumpNum) ->
                         //check whether require next jump(targetid exceed the largest range of fingertable)
                         let x = 2.0 ** 63.0
                         if float targetId > (float id + x) then 
                             let nextWorker = getWorkerById fingerTable.Tail
-                            nextWorker <! Request(targetId, originId, jumpNum + 1, lookup)
+                            nextWorker <! Request(targetId, originId, jumpNum + 1)
                         else //find range and the node it belong to
                             let myboss = select @"akka://ChordModel/user/localActor" system
-                            if targetId = id then 
+                            let lists = List.unzip fingerTable
+                            let range = fst lists
+                            let rangeSuss = snd lists
+                            if checkWithin targetId id successor then 
                                 let origin = getWorkerById originId
-                                if lookup then //lookup operation or find successor operation
-                                    origin <! Response("succeed")
-                                    myboss <! Report(jumpNum)
-                                else 
-                                    origin <! Successor(id) 
+                                origin <! Response("succeed")
+                                myboss <! Report(jumpNum) 
                             else 
-                                let mutable plus = 2.0 ** 63.0
-                                let revFing = List.rev fingerTable
-                                let mutable endrange = float id + plus
-                                let mutable i = 0;
-                                let mutable searchId = targetId
-                                if endrange < 2.0 ** 64.0 || (searchId > id && float searchId < endrange) then 
-                                    searchId <- targetId
-                                else searchId <- targetId + 64
-                                while (float searchId < endrange) do
-                                    plus <- plus / 2.0
-                                    endrange <- endrange + plus
-                                    i <- i + 1
-                                let nextWorker = getWorkerById revFing.[i]
-                                nextWorker <! Request(targetId, originId, jumpNum + 1, lookup)
+                                let nextWorker = findSuccessor id targetId fingerTable 
+                                nextWorker <! Request(targetId, originId, jumpNum + 1)
                     | Response(msg) ->
                         if msg = "succeed" then requestSuccess <- requestSuccess + 1
                     | _ -> ()
