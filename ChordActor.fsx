@@ -110,6 +110,21 @@ let createWorker id =
                         if id <> response then 
                             successor <- response
                             (getWorkerById successor) <! Notify(id)
+                    let getClosestPrecedingNode currId =
+                        let mutable res = id
+                        for i = F_TABLE_SIZE - 1 downto 0 do
+                            let (_, succ) = fingerTable.[i]
+                            // TODO: Check range method
+                            if (id < succ && succ < currId) then res <- succ
+                        res
+                    let findSuccessor currId = 
+                        // if target within the range of current node and its successor return successer
+                        // if not, find the closest preceding node of the target. The successor of preceding node should be same with target
+                        if (id < currId && currId <= successor) then 
+                            successor
+                        else 
+                            let closestPrecedingNode = (currId |> getClosestPrecedingNode |> getWorkerById) 
+                            Async.RunSynchronously (closestPrecedingNode <? FindSuccessor(currId))
 
                     timer.Start()
                     // Methods for join and stablize 
