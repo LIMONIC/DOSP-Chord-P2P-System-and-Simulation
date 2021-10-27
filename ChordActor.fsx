@@ -24,12 +24,11 @@ let numRequests = fsi.CommandLineArgs.[2] |> int
 let rnd = System.Random ()
 
 (*/ Worker Actors
-    * stabilize(): it asks its successor for the successor��s predecessor p, and decides whether p should be n��s successor instead.
+    * stabilize(): it asks its successor for the successor's predecessor p, and decides whether p should be n's successor instead.
     * fix fingers(): to make sure its finger table entries are correct
     * check predecessor(): return current node's predecessor.
     * sendRequest(): send request
     * getResponse(): request succeed or not
-
     ### Variables
     * predecessor -> used in stabilize()
     * successor -> used in stabilize()
