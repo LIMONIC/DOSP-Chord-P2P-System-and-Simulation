@@ -16,14 +16,36 @@ type Information =
     | Request of (int*int*int) // target id, origin id, num of jump
     | Response of (string) // target node response its address to origin
     | Report of (int) // target node report num of jumps to boss
-    | Init of (string)
+    | Create of (int)
+    | Join of (int)
+    | Notify of (int)
+    | FindSuccessor of (int)
+    | CheckPredecessor of (int)
+
+let F_TABLE_SIZE = 32
+let CHORD_RING_SIZE = 2.**32. |> int64
 
 // Input from Command Line
 let numNodes = fsi.CommandLineArgs.[1] |> int
 let numRequests = fsi.CommandLineArgs.[2] |> int
 let rnd = System.Random ()
 
+/// Generate SHA1
+// let removeChar (stripChars:string) (text:string) =
+//     text.Split(stripChars.ToCharArray(), StringSplitOptions.RemoveEmptyEntries) |> String.Concat
+// let getSHA1Str (input:string) = 
+//     input
+//     |> Encoding.ASCII.GetBytes
+//     |> (new SHA1Managed()).ComputeHash
+//     |> System.BitConverter.ToString
+//     |> removeChar "-"
+// let getSHA1Arr (input:string) = input |> getSHA1Str |> Seq.toList
+
+
+
 (*/ Worker Actors
+    * find_successor(id)
+    * notify()
     * stabilize(): it asks its successor for the successor's predecessor p, and decides whether p should be n's successor instead.
     * fix fingers(): to make sure its finger table entries are correct
     * check predecessor(): return current node's predecessor.
@@ -44,9 +66,9 @@ let getWorkerById id =
     let actorPath = @"akka://ChordModel/user/worker" + string id
     select actorPath system
 
-let stabilize id =
-    printfn $"worker{id} self stabilize"
-    -1
+// let stabilize id =
+//     printfn $"worker{id} self stabilize"
+//     -1
 
 let checkPredecessor id = 
     printfn $"worker{id} check its predecessor"
@@ -58,29 +80,61 @@ let fixFinger id fingertable=
     newFing
 
 let createWorker id = 
-    spawn system ("worker" + id.ToString())
+    spawn system (id.ToString())
         (fun mailbox ->
             let rec loop() =
                 actor {
                     let! message = mailbox.Receive()
                     let outBox = mailbox.Sender()
+
                     let mutable predecessor = -1
                     let mutable successor = id;
+                    let mutable fingerTable = []
+
                     let mutable requestSuccess = 0
-                    let mutable fingerTable = List.Empty
                     let mutable selfcheck = true;
 
                     let timer = new Timers.Timer(500.) // 500ms
                     let waitTime = Async.AwaitEvent (timer.Elapsed) |> Async.Ignore
+                    // Generate default finger table. [(1, 0); (2, 0); (4, 0); ... ]
+                    let initFingerTab id size = 
+                        let key = [for i in 0..size - 1-> (id + int (2. ** (float (i - 1))))]
+                        let value = [for _ in 0..size - 1  -> id]
+                        List.zip key value
+                    let stabilize =
+                        printfn $"worker{id} self stabilize"
+                        // Ask currerent node's successor for the successor’s predecessor p
+                        let response = (Async.RunSynchronously ((getWorkerById successor) <? CheckPredecessor(id)))
+                        // check if its successor’s predecessor is still itself
+                        // if not: update its successor; Notify its new successor to update predecessor
+                        if id <> response then 
+                            successor <- response
+                            (getWorkerById successor) <! Notify(id)
+
                     timer.Start()
                     // Methods for join and stablize 
                     while selfcheck do 
                         Async.RunSynchronously waitTime // Wait some tiem before run following codes
-                        successor <- stabilize id
+                        stabilize
+                        // TODO: fixTable(); (Optional)check if predecessor is failed
                         predecessor <- checkPredecessor id 
                         fingerTable <- fixFinger id fingerTable
+
                     match message with
-                    | Init(msg) -> ()
+                    | Create(currId) ->
+                        predecessor <- -1
+                        successor <- currId
+                        fingerTable <- initFingerTab currId F_TABLE_SIZE
+                    | Join(target) ->
+                        predecessor <- -1
+                        successor <- (Async.RunSynchronously ((getWorkerById target) <? FindSuccessor(id)))
+                        (getWorkerById successor) <! Notify(id)
+                    | FindSuccessor(currId) -> 
+                        outBox <! "" // TODO: Recursively return the successor id
+                    | Notify(predId) -> 
+                        predecessor <- predId
+                    | CheckPredecessor(currId) -> 
+                        outBox <! predecessor
                     | NetDone(msg) -> 
                         printfn $"net done. End stabilize fix check and start sending request"
                         selfcheck <- false; // Stop periodical method 
@@ -139,9 +193,9 @@ let localActor (mailbox:Actor<_>) =
             // system.ActorOf()
             // create chord network
             // let url = "akka.tcp://Project2@localhost:8777/user/"
-            actorZero <! Init("create")
+            actorZero <! Create(0)
             // join actors
-            [1..(n - 1)] |> List.iter(fun _ -> (workerSystem <! Init("join")))
+            [1..(n - 1)] |> List.iter(fun _ -> (workerSystem <! Join(0)))
             printfn "[INFO]: All nodes have joined into the Chord network."
             // Send finish msg
             actorZero <! NetDone("Done");
