@@ -3,6 +3,8 @@
 #r "nuget: Akka.Remote" 
 
 open System
+open System.Security.Cryptography
+open System.Text
 open Akka.Actor
 open Akka.Configuration
 open Akka.FSharp
@@ -13,17 +15,34 @@ let system = ActorSystem.Create("ChordModel", Configuration.defaultConfig())
 type Information = 
     | Input of (int*int)
     | NetDone of (string)
-    | Request of (int*int*int) // target id, origin id, num of jump
+    | Request of (string*string*int) // target id, origin id, num of jump
     | Response of (string) // target node response its address to origin
     | Report of (int) // target node report num of jumps to boss
     | Init of (string)
+
+let CHORD_RING_SIZE = 2.**64.
 
 // Input from Command Line
 let numNodes = fsi.CommandLineArgs.[1] |> int
 let numRequests = fsi.CommandLineArgs.[2] |> int
 let rnd = System.Random ()
 
+/// Generate SHA1
+// let removeChar (stripChars:string) (text:string) =
+//     text.Split(stripChars.ToCharArray(), StringSplitOptions.RemoveEmptyEntries) |> String.Concat
+// let getSHA1Str (input:string) = 
+//     input
+//     |> Encoding.ASCII.GetBytes
+//     |> (new SHA1Managed()).ComputeHash
+//     |> System.BitConverter.ToString
+//     |> removeChar "-"
+// let getSHA1Arr (input:string) = input |> getSHA1Str |> Seq.toList
+
+
+
 (*/ Worker Actors
+    * find_successor(id)
+    * notify()
     * stabilize(): it asks its successor for the successor��s predecessor p, and decides whether p should be n��s successor instead.
     * fix fingers(): to make sure its finger table entries are correct
     * check predecessor(): return current node's predecessor.
@@ -59,7 +78,7 @@ let fixFinger id fingertable=
     newFing
 
 let createWorker id = 
-    spawn system ("worker" + id.ToString())
+    spawn system $"{id}"
         (fun mailbox ->
             let rec loop() =
                 actor {
@@ -69,11 +88,14 @@ let createWorker id =
                     let mutable successor = id;
                     let mutable requestSuccess = 0
                     let mutable fingerTable = List.Empty
-                    let mutable selfcheck = true;
+                    let mutable selfcheck = false;
 
                     let timer = new Timers.Timer(500.) // 500ms
                     let waitTime = Async.AwaitEvent (timer.Elapsed) |> Async.Ignore
                     timer.Start()
+
+                    let findSuccessor id = 
+                        0
                     // Methods for join and stablize 
                     while selfcheck do 
                         Async.RunSynchronously waitTime // Wait some tiem before run following codes
@@ -81,7 +103,15 @@ let createWorker id =
                         predecessor <- checkPredecessor id 
                         fingerTable <- fixFinger id fingerTable
                     match message with
-                    | Init(msg) -> ()
+                    | Init(msg) -> 
+                        match msg with
+                        | "create" -> 
+                            predecessor <- -1
+                            successor <- id
+                        | "join" ->
+                            predecessor <- -1
+                            // successor <- actor <? FindSuccessor(id)
+                        | _ -> failwith $"[ERROR]: Wrong init message!"
                     | NetDone(msg) -> 
                         printfn $"net done. End stabilize fix check and start sending request"
                         selfcheck <- false; // Stop periodical method 
@@ -91,7 +121,7 @@ let createWorker id =
                             self <! Request(key, id, 0) 
                     | Request(targetId, originId, jumpNum) ->
                         //check whether require next jump(targetid exceed the largest range of fingertable)
-                        if targetId > (id + 32) then 
+                        if targetId > (id + 160) then 
                             let nextWorker = getWorkerById fingerTable.Tail
                             nextWorker <! Request(targetId, originId, jumpNum + 1)
                         else //find range and the node it belong to
