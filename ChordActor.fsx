@@ -61,10 +61,17 @@ let fixFinger id fingertable=
     printfn $"worker{id} fix its fingertable"
     newFing
 
-let checkWithin targetid startid endid =
-    let searchid = if startid < endid then targetid else targetid + 64
-    if searchid > startid && searchid <= endid then true else false
-        
+
+let checkWithin targetid startid endid = 
+    if startid > endid then
+        if (targetid > startid && targetid <= 64) || (targetid >= 0 && targetid <= endid) then true else false
+    else 
+        if targetid > startid && targetid <= endid then true
+        else //if targetid not within current range
+            if endid > 64 then //if endid exceed circle size
+                let searchid = targetid + 64
+                if searchid > startid && searchid <= endid then true else false
+            else false
 
 let createWorker id = 
     spawn system ("worker" + string id)
