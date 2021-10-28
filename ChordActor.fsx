@@ -21,6 +21,7 @@ type Information =
     | Notify of (int)
     | FindSuccessor of (int)
     | CheckPredecessor of (int)
+    | UpdateSuccessor of (int)
 
 let F_TABLE_SIZE = 32
 let CHORD_RING_SIZE = 2.**32. |> int64
@@ -70,14 +71,15 @@ let getWorkerById id =
 //     printfn $"worker{id} self stabilize"
 //     -1
 
-let checkPredecessor id = 
-    printfn $"worker{id} check its predecessor"
-    -1
+// let checkPredecessor id = 
+//     printfn $"worker{id} check its predecessor"
+//     -1
 
-let fixFinger id fingertable= 
-    let newFing = fingertable
-    printfn $"worker{id} fix its fingertable"
-    newFing
+// let fixFinger id fingertable= 
+//     let newFing = fingertable
+//     printfn $"worker{id} fix its fingertable"
+//     newFing
+
 
 let createWorker id = 
     spawn system (id.ToString())
@@ -96,11 +98,14 @@ let createWorker id =
 
                     let timer = new Timers.Timer(500.) // 500ms
                     let waitTime = Async.AwaitEvent (timer.Elapsed) |> Async.Ignore
+                    let checkWithin targetid startid endid =
+                        let searchid = if startid < endid then targetid else targetid + 64
+                        searchid > startid && searchid <= endid
                     // Generate default finger table. [(1, 0); (2, 0); (4, 0); ... ]
-                    let initFingerTab id size = 
-                        let key = [for i in 0..size - 1-> (id + int (2. ** (float (i - 1))))]
-                        let value = [for _ in 0..size - 1  -> id]
-                        List.zip key value
+                    // let initFingerTab id size = 
+                    //     let key = [for i in 0..size - 1-> (id + int (2. ** (float (i - 1))))]
+                    //     let value = [for _ in 0..size - 1  -> id]
+                    //     List.zip key value
                     let stabilize =
                         printfn $"worker{id} self stabilize"
                         // Ask currerent node's successor for the successor’s predecessor p
@@ -114,17 +119,33 @@ let createWorker id =
                         let mutable res = id
                         for i = F_TABLE_SIZE - 1 downto 0 do
                             let (_, succ) = fingerTable.[i]
-                            // TODO: Check range method
-                            if (id < succ && succ < currId) then res <- succ
+                            if (checkWithin succ id currId) then res <- succ
                         res
                     let findSuccessor currId = 
                         // if target within the range of current node and its successor return successer
                         // if not, find the closest preceding node of the target. The successor of preceding node should be same with target
-                        if (id < currId && currId <= successor) then 
+                        if (checkWithin currId id successor) then 
                             successor
                         else 
                             let closestPrecedingNode = (currId |> getClosestPrecedingNode |> getWorkerById) 
                             Async.RunSynchronously (closestPrecedingNode <? FindSuccessor(currId))
+                    
+                    let fixFingerTable = 
+                        let mutable next = 0
+                        let mutable finger = []
+                        // update each finger
+                        let fixFinger =
+                            next <- next + 1
+                            if next > F_TABLE_SIZE then next <- 1
+                            findSuccessor(id + int (2. ** (float (next - 1))))
+                        for _ in 1..F_TABLE_SIZE do 
+                            finger <- finger@[(next, fixFinger)]
+                        finger
+                        // let succWorker = getWorkerById succ
+                        // //random pick an worker to find successor
+                        // let range = fst (List.unzip fingerTable)
+                        // let rangeSuss = [for i in range -> Async.RunSynchronously(succWorker <? FindSuccessor(i))]
+                        // List.zip range rangeSuss
 
                     timer.Start()
                     // Methods for join and stablize 
@@ -132,20 +153,21 @@ let createWorker id =
                         Async.RunSynchronously waitTime // Wait some tiem before run following codes
                         stabilize
                         // TODO: fixTable(); (Optional)check if predecessor is failed
-                        predecessor <- checkPredecessor id 
-                        fingerTable <- fixFinger id fingerTable
+                        // predecessor <- checkPredecessor id 
+                        fingerTable <- fixFingerTable
 
                     match message with
                     | Create(currId) ->
                         predecessor <- -1
                         successor <- currId
-                        fingerTable <- initFingerTab currId F_TABLE_SIZE
+                        fingerTable <- fixFingerTable
                     | Join(target) ->
                         predecessor <- -1
                         successor <- (Async.RunSynchronously ((getWorkerById target) <? FindSuccessor(id)))
                         (getWorkerById successor) <! Notify(id)
-                    | FindSuccessor(currId) -> 
-                        outBox <! "" // TODO: Recursively return the successor id
+                        fingerTable <- fixFingerTable
+                    | FindSuccessor(currId) ->
+                        outBox <! findSuccessor currId
                     | Notify(predId) -> 
                         predecessor <- predId
                     | CheckPredecessor(currId) -> 
@@ -157,27 +179,43 @@ let createWorker id =
                             let key = 0; //need to generate a random key within the chord
                             let self = getWorkerById id
                             self <! Request(key, id, 0) 
+                    | UpdateSuccessor(id) ->
+                        successor <- id
+                        (*
+                        let x = 2.0 ** 63.0
+                        if float targetId > (float id + x) then  //if have to jump the end node of fingertable
+                            let nextWorker = getWorkerById fingerTable.Tail
+                            nextWorker <! FindSuccessor(targetId)
+                        else //find range and the node it belong to
+                            let myboss = select @"akka://ChordModel/user/localActor" system
+                            let lists = List.unzip fingerTable
+                            let range = fst lists
+                            let rangeSuss = snd lists
+                            if checkWithin targetId id successor then 
+                                outBox <! id
+                            else 
+                                let nextWorker = findSuccessor id targetId fingerTable 
+                                nextWorker <! FindSuccessor(targetId)
+                        *)
+
                     | Request(targetId, originId, jumpNum) ->
                         //check whether require next jump(targetid exceed the largest range of fingertable)
-                        if targetId > (id + 32) then 
+                        let x = 2.0 ** 63.0
+                        if float targetId > (float id + x) then 
                             let nextWorker = getWorkerById fingerTable.Tail
                             nextWorker <! Request(targetId, originId, jumpNum + 1)
                         else //find range and the node it belong to
                             let myboss = select @"akka://ChordModel/user/localActor" system
-                            if targetId = id then 
+                            let lists = List.unzip fingerTable
+                            let range = fst lists
+                            let rangeSuss = snd lists
+                            if checkWithin targetId id successor then 
                                 let origin = getWorkerById originId
                                 origin <! Response("succeed")
-                                myboss <! Report(jumpNum)
+                                myboss <! Report(jumpNum) 
                             else 
-                                let mutable plus = 2
-                                for i in fingerTable do
-                                    let startrange = (id + plus / 2)
-                                    let endrange = (id + plus)
-                                    if targetId >= startrange && targetId < endrange then 
-                                        let origin = getWorkerById originId
-                                        origin <! Response("succeed")
-                                        myboss <! Report(jumpNum + 1)
-                                    plus <- plus * 2
+                                let nextWorker = findSuccessor id targetId fingerTable 
+                                nextWorker <! Request(targetId, originId, jumpNum + 1)
                     | Response(msg) ->
                         if msg = "succeed" then requestSuccess <- requestSuccess + 1
                     | _ -> ()
