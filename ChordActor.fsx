@@ -64,14 +64,10 @@ let fixFinger id fingertable=
 
 let checkWithin targetid startid endid = 
     if startid > endid then
-        if (targetid > startid && targetid <= 64) || (targetid >= 0 && targetid <= endid) then true else false
+        (targetid > startid && targetid <= ((2.0 ** 64.0) - 1.0)) || (targetid >= 0.0 && targetid <= endid)
     else 
-        if targetid > startid && targetid <= endid then true
-        else //if targetid not within current range
-            if endid > 64 then //if endid exceed circle size
-                let searchid = targetid + 64
-                if searchid > startid && searchid <= endid then true else false
-            else false
+        targetid > startid && targetid <= endid
+        
 
 let createWorker id = 
     spawn system ("worker" + string id)
