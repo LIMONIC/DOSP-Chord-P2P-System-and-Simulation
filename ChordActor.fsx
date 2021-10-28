@@ -98,9 +98,19 @@ let createWorker id =
 
                     let timer = new Timers.Timer(500.) // 500ms
                     let waitTime = Async.AwaitEvent (timer.Elapsed) |> Async.Ignore
-                    let checkWithin targetid startid endid =
-                        let searchid = if startid < endid then targetid else targetid + 64
-                        searchid > startid && searchid <= endid
+                    let checkWithin targetid startid endid = 
+                        if startid > endid then
+                            (targetid > startid && targetid <= 64) || (targetid >= 0 && targetid <= endid)
+                        else 
+                            if targetid > startid && targetid <= endid then true
+                            else //if targetid not within current range
+                                if endid > 64 then //if endid exceed circle size
+                                    let searchid = targetid + 64
+                                    searchid > startid && searchid <= endid
+                                else false
+                    // let checkWithin targetid startid endid =
+                    //     let searchid = if startid < endid then targetid else targetid + 64
+                    //     searchid > startid && searchid <= endid
                     // Generate default finger table. [(1, 0); (2, 0); (4, 0); ... ]
                     // let initFingerTab id size = 
                     //     let key = [for i in 0..size - 1-> (id + int (2. ** (float (i - 1))))]
@@ -137,7 +147,7 @@ let createWorker id =
                         let fixFinger =
                             next <- next + 1
                             if next > F_TABLE_SIZE then next <- 1
-                            findSuccessor(id + int (2. ** (float (next - 1))))
+                            findSuccessor (id + int (2. ** (float (next - 1))))
                         for _ in 1..F_TABLE_SIZE do 
                             finger <- finger@[(next, fixFinger)]
                         finger
@@ -146,6 +156,16 @@ let createWorker id =
                         // let range = fst (List.unzip fingerTable)
                         // let rangeSuss = [for i in range -> Async.RunSynchronously(succWorker <? FindSuccessor(i))]
                         // List.zip range rangeSuss
+                    // let jump = ref 0
+                    // let cntJump (s:string) = 
+                    //     match s with
+                    //     | "incr" ->    
+                    //         // fun _ -> 
+                    //         incr jump 
+                    //         // printfn "%d" !jump
+                    //             // printfn "%d" res
+                    //     | _ -> printfn "%s" "Please give me a number"
+                    //     fun add -> incr jump
 
                     timer.Start()
                     // Methods for join and stablize 
