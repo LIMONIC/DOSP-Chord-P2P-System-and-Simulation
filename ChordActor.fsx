@@ -13,15 +13,16 @@ let system = ActorSystem.Create("ChordModel", Configuration.defaultConfig())
 type Information = 
     | Input of (int*int)
     | NetDone of (string)
-    | Request of (int*int*int) // target id, origin id, num of jump
-    | Response of (string) // target node response its address to origin
+    | Request of (int64*int64*int) // target id, origin id, num of jump
+    | Response of (int64) // target node response its address to origin
     | Report of (int) // target node report num of jumps to boss
-    | Create of (int)
-    | Join of (int)
-    | Notify of (int)
-    | FindSuccessor of (int)
-    | CheckPredecessor of (int)
-    | UpdateSuccessor of (int)
+    // | Create of (int64)
+    | Join of (int64)
+    | Notify of (int64)
+    | FindSuccessor of (int64)
+    | CheckPredecessor of (int64)
+    | Update of (int64)
+    | Print of (string)
 
 let F_TABLE_SIZE = 32
 let CHORD_RING_SIZE = 2.**32. |> int64
@@ -67,47 +68,54 @@ let getWorkerById id =
     let actorPath = @"akka://ChordModel/user/worker" + string id
     select actorPath system
 
-// let stabilize id =
-//     printfn $"worker{id} self stabilize"
-//     -1
-
-// let checkPredecessor id = 
-//     printfn $"worker{id} check its predecessor"
-//     -1
-
-// let fixFinger id fingertable= 
-//     let newFing = fingertable
-//     printfn $"worker{id} fix its fingertable"
-//     newFing
+let printer (mailbox:Actor<_>) =
+    let rec loop () = actor {
+        let! message = mailbox.Receive()
+        // printfn "worker acotr receive msg: %A" message
+        match message with
+        | Print(msg) -> 
+            printfn "%s" msg
+        | _ -> ()
+        return! loop()
+    }
+    loop()
+let printerRef = spawn system "printer" printer
 
 
 let createWorker id = 
-    spawn system (id.ToString())
+    spawn system ("worker" + string id)
         (fun mailbox ->
             let rec loop() =
                 actor {
+                    let DEBUG = false
+                    // if DEBUG then printfn $"[DEBUG]: id: {id}"
                     let! message = mailbox.Receive()
                     let outBox = mailbox.Sender()
+                    let myboss = select @"akka://ChordModel/user/boss" system
 
-                    let mutable predecessor = -1
+                    let mutable predecessor = -1L
                     let mutable successor = id;
                     let mutable fingerTable = []
 
                     let mutable requestSuccess = 0
-                    let mutable selfcheck = true;
-
-                    let timer = new Timers.Timer(500.) // 500ms
+                    let mutable selfcheck = false;
+                    
+                    let timer = new Timers.Timer(50.) // 50ms
                     let waitTime = Async.AwaitEvent (timer.Elapsed) |> Async.Ignore
                     let checkWithin targetid startid endid = 
+                        //TODO: if start = end
                         if startid > endid then
-                            (targetid > startid && targetid <= 64) || (targetid >= 0 && targetid <= endid)
+                            (targetid > startid && targetid <= CHORD_RING_SIZE) || (targetid >= 0L && targetid <= endid)
+                        else if startid < endid then
+                            targetid > startid && targetid <= endid
                         else 
-                            if targetid > startid && targetid <= endid then true
-                            else //if targetid not within current range
-                                if endid > 64 then //if endid exceed circle size
-                                    let searchid = targetid + 64
-                                    searchid > startid && searchid <= endid
-                                else false
+                            true
+
+                            // else //if targetid not within current range
+                            //     if endid > 64 then //if endid exceed circle size
+                            //         let searchid = targetid + 64
+                            //         searchid > startid && searchid <= endid
+                            //     else false
                     // let checkWithin targetid startid endid =
                     //     let searchid = if startid < endid then targetid else targetid + 64
                     //     searchid > startid && searchid <= endid
@@ -116,41 +124,67 @@ let createWorker id =
                     //     let key = [for i in 0..size - 1-> (id + int (2. ** (float (i - 1))))]
                     //     let value = [for _ in 0..size - 1  -> id]
                     //     List.zip key value
-                    let stabilize =
-                        printfn $"worker{id} self stabilize"
+                    let stabilize _ =
+                        printerRef <! Print($"worker{id} self stabilize")
                         // Ask currerent node's successor for the successor’s predecessor p
-                        let response = (Async.RunSynchronously ((getWorkerById successor) <? CheckPredecessor(id)))
-                        // check if its successor’s predecessor is still itself
-                        // if not: update its successor; Notify its new successor to update predecessor
-                        if id <> response then 
-                            successor <- response
-                            (getWorkerById successor) <! Notify(id)
+                        // if DEBUG then printfn $"[DEBUG][stabilize]: id {id}, successor {successor}"
+                        
+                        // Async.RunSynchronously 
+                        // (((getWorkerById successor) <! CheckPredecessor(id)))
+                        if successor <> id then 
+                            let mutable response = (Async.RunSynchronously((getWorkerById successor) <? CheckPredecessor(id)))
+
+                            // if response = -1L then (response <- successor)
+                            // if DEBUG then printfn $"[DEBUG][stabilize]: response {response}"
+                            // let response = predecessor
+                            // check if its successor’s predecessor is still itself
+                            // if not: update its successor; Notify its new successor to update predecessor
+                            // if response = -1L then response
+                            // printerRef <! Print($"!!!Response {response}")
+                            if successor <> id then 
+                                printfn "????"
+                                successor <- response
+                                (getWorkerById successor) <! Notify(id)
+                        if id = 0L then printerRef <! Print($"[DEBUG]: id {id}, successor {successor}, predecessor {predecessor}")
+                    
                     let getClosestPrecedingNode currId =
                         let mutable res = id
                         for i = F_TABLE_SIZE - 1 downto 0 do
                             let (_, succ) = fingerTable.[i]
                             if (checkWithin succ id currId) then res <- succ
                         res
+                    
                     let findSuccessor currId = 
                         // if target within the range of current node and its successor return successer
                         // if not, find the closest preceding node of the target. The successor of preceding node should be same with target
+                        // printfn $"currId:{currId}\tid:{id}\tsuccessor:{successor}\t in range:{checkWithin currId id successor}"
                         if (checkWithin currId id successor) then 
                             successor
                         else 
                             let closestPrecedingNode = (currId |> getClosestPrecedingNode |> getWorkerById) 
                             Async.RunSynchronously (closestPrecedingNode <? FindSuccessor(currId))
-                    
-                    let fixFingerTable = 
+                    let findSuccessorAndCnt tId oId jNum = 
+                        if (checkWithin tId id successor) then 
+                            successor |> getWorkerById <! Request(tId, oId, jNum + 1)
+                        else 
+                            let closestPrecedingNode = (tId |> getClosestPrecedingNode |> getWorkerById) 
+                            closestPrecedingNode <! Request(tId, oId, jNum + 1)
+
+                    let fixFingerTable _ = 
                         let mutable next = 0
                         let mutable finger = []
                         // update each finger
-                        let fixFinger =
+                        let fixFinger _ =
+                            // printfn $"next:{next}"
                             next <- next + 1
+                            // printfn $"next:{next}"
                             if next > F_TABLE_SIZE then next <- 1
-                            findSuccessor (id + int (2. ** (float (next - 1))))
+                            findSuccessor (id + int64 (2. ** (float (next - 1))))
                         for _ in 1..F_TABLE_SIZE do 
-                            finger <- finger@[(next, fixFinger)]
+                            finger <- finger@[(next, fixFinger())]
                         finger
+                        
+                    fingerTable <- fixFingerTable()
                         // let succWorker = getWorkerById succ
                         // //random pick an worker to find successor
                         // let range = fst (List.unzip fingerTable)
@@ -169,38 +203,50 @@ let createWorker id =
 
                     timer.Start()
                     // Methods for join and stablize 
-                    while selfcheck do 
-                        Async.RunSynchronously waitTime // Wait some tiem before run following codes
-                        stabilize
-                        // TODO: fixTable(); (Optional)check if predecessor is failed
-                        // predecessor <- checkPredecessor id 
-                        fingerTable <- fixFingerTable
-
+                    let check _ =
+                        printfn "!!!CHECK!!!"
+                        while true do 
+                            // Async.RunSynchronously waitTime // Wait some tiem before run following codes
+                            // stabilize()
+                            // TODO: fixTable(); (Optional)check if predecessor is failed
+                            // predecessor <- checkPredecessor id 
+                            fingerTable <- fixFingerTable()
+                    // async {check()} |> ignore
                     match message with
-                    | Create(currId) ->
-                        predecessor <- -1
-                        successor <- currId
-                        fingerTable <- fixFingerTable
                     | Join(target) ->
-                        predecessor <- -1
+                        if true then printerRef <! Print($"[DEBUG][Join]: joining {id} to {target}") 
+                        predecessor <- -1L
+                        printfn "@@@@@@@@@@@@@@"
+                        // if id <> 0L then
                         successor <- (Async.RunSynchronously ((getWorkerById target) <? FindSuccessor(id)))
                         (getWorkerById successor) <! Notify(id)
-                        fingerTable <- fixFingerTable
+                        fingerTable <- fixFingerTable()
+                        // getWorkerById id <! Update(id)
+                        // check()
+                        // async {check()} |> ignore 
                     | FindSuccessor(currId) ->
+                        if DEBUG then printerRef <! Print($"[DEBUG][FindSuccessor]: currId {currId}") 
                         outBox <! findSuccessor currId
                     | Notify(predId) -> 
-                        predecessor <- predId
+                        if DEBUG then printerRef <! Print($"[DEBUG][Notify]: predId {predId}")
+                        if predecessor = -1L || checkWithin predId predecessor id then 
+                            predecessor <- predId
+                            printfn $"!!!Update predecessor!!! id={id}, predecessor={predecessor}"
                     | CheckPredecessor(currId) -> 
+                        // if DEBUG then printfn $"[DEBUG][CheckPredecessor]: currId {currId}"
+                        currId |> ignore
                         outBox <! predecessor
-                    | NetDone(msg) -> 
-                        printfn $"net done. End stabilize fix check and start sending request"
-                        selfcheck <- false; // Stop periodical method 
-                        for i in 1 .. numRequests do
-                            let key = 0; //need to generate a random key within the chord
-                            let self = getWorkerById id
-                            self <! Request(key, id, 0) 
-                    | UpdateSuccessor(id) ->
-                        successor <- id
+                    // | NetDone(msg) -> 
+                    //     printfn $"net done. End stabilize fix check and start sending request"
+                    //     selfcheck <- false; // Stop periodical method 
+                    //     for i in 1 .. numRequests do
+                    //         let key = 0; //need to generate a random key within the chord
+                    //         let self = getWorkerById id
+                    //         self <! Request(key, id, 0) 
+                    | Update(_) ->
+                        stabilize()
+                        fingerTable <- fixFingerTable()
+                        getWorkerById id <! Update(id)
                         (*
                         let x = 2.0 ** 63.0
                         if float targetId > (float id + x) then  //if have to jump the end node of fingertable
@@ -217,35 +263,44 @@ let createWorker id =
                                 let nextWorker = findSuccessor id targetId fingerTable 
                                 nextWorker <! FindSuccessor(targetId)
                         *)
-
                     | Request(targetId, originId, jumpNum) ->
-                        //check whether require next jump(targetid exceed the largest range of fingertable)
-                        let x = 2.0 ** 63.0
-                        if float targetId > (float id + x) then 
-                            let nextWorker = getWorkerById fingerTable.Tail
-                            nextWorker <! Request(targetId, originId, jumpNum + 1)
-                        else //find range and the node it belong to
-                            let myboss = select @"akka://ChordModel/user/localActor" system
-                            let lists = List.unzip fingerTable
-                            let range = fst lists
-                            let rangeSuss = snd lists
-                            if checkWithin targetId id successor then 
-                                let origin = getWorkerById originId
-                                origin <! Response("succeed")
-                                myboss <! Report(jumpNum) 
-                            else 
-                                let nextWorker = findSuccessor id targetId fingerTable 
-                                nextWorker <! Request(targetId, originId, jumpNum + 1)
-                    | Response(msg) ->
-                        if msg = "succeed" then requestSuccess <- requestSuccess + 1
+                        if DEBUG then printfn $"[DEBUG][Request]: targetId {targetId}, originId {originId}, jumpNum {jumpNum}"
+                        // resources in the range of (predecessor, id] are maintained in
+                        if checkWithin targetId predecessor id then 
+                            // report id to the node that made request
+                            originId |> getWorkerById <! Response(id)
+                            // report jumpNum to boss 
+                            myboss <! Report(jumpNum)
+                        findSuccessorAndCnt targetId originId jumpNum
+                        // //check whether require next jump(targetid exceed the largest range of fingertable)
+                        // let x = 2.0 ** 63.0
+                        // if float targetId > (float id + x) then 
+                        //     let nextWorker = getWorkerById fingerTable.Tail
+                        //     nextWorker <! Request(targetId, originId, jumpNum + 1)
+                        // else //find range and the node it belong to
+                            
+                        //     let lists = List.unzip fingerTable
+                        //     let range = fst lists
+                        //     let rangeSuss = snd lists
+                        //     if checkWithin targetId id successor then 
+                        //         let origin = getWorkerById originId
+                        //         origin <! Response("succeed")
+                        //         myboss <! Report(jumpNum) 
+                        //     else 
+                        //         let nextWorker = findSuccessor id targetId fingerTable 
+                        //         nextWorker <! Request(targetId, originId, jumpNum + 1)
+                    | Response(currId) ->
+                        if DEBUG then printfn $"[DEBUG][Response]: currId {currId}"
+                        printfn $"[INFO]: Found requested resource' successor: {currId} for {id}"
                     | _ -> ()
+                    printerRef <! Print($"[DEBUG]: id {id}, successor {successor}, predecessor {predecessor}")
                     return! loop()
                 }
             loop()
         )
 
 let localActor (mailbox:Actor<_>) = 
-    let actorZero = createWorker 0
+    // let actorZero = createWorker 0
     let mutable completedLocalWorkerNum = 0
     let mutable localActorNum = 0
     let mutable totJumpNum = 0
@@ -258,22 +313,31 @@ let localActor (mailbox:Actor<_>) =
         | Input(n,r) -> 
             printfn $"[INFO]: Num of Nodes: {n}\t Num of Request: {r}"
             localActorNum <- n
-            // generate a list with random actor ids
-            let idList = [1..(n - 1)] |> List.sortBy(fun _ -> rnd.Next(1, int (n - 1)) |> int )
-            let workersPool = idList |> List.map(fun id -> (createWorker id))
-            let workerenum = [|for i = 1 to workersPool.Length do (sprintf "/user/%d" i)|]
-            let workerSystem = system.ActorOf(Props.Empty.WithRouter(Akka.Routing.RoundRobinGroup(workerenum)))
+            // create actors
+            let zero = createWorker (0 |> int64)
+            let one = createWorker (1 |> int64)
+            one <! Join(0L)
+            // zero <! Update(0L)
+            [2..(n - 1)] |> List.iter(fun id -> 
+                let actor = createWorker (id |> int64)
+                // if id <> 0 then 
+                printfn "!!@@%A" actor
+                actor <! Join(0L))
+                    // actor <! Update(0L))
+            // Group actors by router
+            // let workerenum = [|for i = 1 to workersPool.Length - 1 do (sprintf "/user/worker%d" i)|] |> Array.sortBy(fun _ -> rnd.Next(1, int (n - 1)))
+            // let workerSystem = system.ActorOf(Props.Empty.WithRouter(Akka.Routing.RoundRobinGroup(workerenum)))
             // system.ActorOf()
             // create chord network
             // let url = "akka.tcp://Project2@localhost:8777/user/"
-            actorZero <! Create(0)
+            // (0 |> getWorkerById) <! Create(0L)
             // join actors
-            [1..(n - 1)] |> List.iter(fun _ -> (workerSystem <! Join(0)))
+            // [1..(n - 1)] |> List.iter(fun _ -> (workerSystem <! Join(0L)))
             printfn "[INFO]: All nodes have joined into the Chord network."
             // Send finish msg
-            actorZero <! NetDone("Done");
-            [1..(n - 1)] |> List.iter(fun _ -> (workerSystem <! NetDone("Done")))
-            printfn "[INFO]: Start request."
+            // actorZero <! NetDone("Done");
+            // [1..(n - 1)] |> List.iter(fun _ -> (workerSystem <! NetDone("Done")))
+            // printfn "[INFO]: Start request."
         | Report(numOfJumps) ->
             completedLocalWorkerNum <- completedLocalWorkerNum + 1
             totJumpNum <- totJumpNum + numOfJumps
@@ -286,7 +350,7 @@ let localActor (mailbox:Actor<_>) =
     }
     loop()
 
-let boss = spawn system "localActor" localActor
+let boss = spawn system "boss" localActor
 boss <! Input(numNodes, numRequests)
 
 system.WhenTerminated.Wait()
