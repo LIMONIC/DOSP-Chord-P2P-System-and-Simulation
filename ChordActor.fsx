@@ -4,6 +4,7 @@
 
 open System
 open Akka.Actor
+open System.Collections.Generic
 open Akka.Configuration
 open Akka.FSharp
 open Akka.TestKit
@@ -107,7 +108,7 @@ let createWorker id =
                 else 
                     true
             let reportProp msg = 
-                printerRef <! Print($"[***][{msg}]ID: {id}, predecessor: {predecessor}, successor: {successor}")
+                printerRef <! Print($"[***][{msg}]ID: {id}, predecessor: {predecessor}, successor: {successor}, fTable: {fingerTable}")
             let checkAlive msg = 
                 printerRef <! Print($"[{msg}]{id} is Alive!")
             let stabilize _ =
@@ -124,7 +125,7 @@ let createWorker id =
                 // printerRef <! Print($"worker:{id} successor:{successor} predecessor:{predecessor}")
                     printerRef <! Print($"&&&&&&&&&&&&& id:{id} successor:{successor} predecessor:{predecessor}")
                     response <- (Async.RunSynchronously((getWorkerById successor) <? CheckPredecessor(id)))
-                    printfn $"response:{response}"
+                    printerRef <! Print($"response:{response}; id {id}")
                     // printerRef <! Print($"{id}  response  {response}")
                     // if response = -1L then (response <- successor)
                     // if DEBUG then printfn $"[DEBUG][stabilize]: response {response}"
@@ -143,12 +144,13 @@ let createWorker id =
                     (getWorkerById successor) <! Notify(id)
                 // printerRef <! Print($"[DEBUG]: id {id}, successor {successor}, predecessor {predecessor}")
             let getClosestPrecedingNode currId =
-                let mutable res = id
+                let mutable res = id //0
                 for i = F_TABLE_SIZE - 1 downto 0 do
                     let (_, succ) = fingerTable.[i]
                     if (checkWithin succ id currId) then res <- succ
                 res
             let findSuccessor currId = 
+                reportProp($"!!!!!!!findSuccessor  currId={currId} id={id} successor={successor} ")
                 // if target within the range of current node and its successor return successer
                 // if not, find the closest preceding node of the target. The successor of preceding node should be same with target
                 // printfn $"currId:{currId}\tid:{id}\tsuccessor:{successor}\t in range:{checkWithin currId id successor}"
@@ -156,7 +158,8 @@ let createWorker id =
                     successor
                 else 
                     let closestPrecedingNode = (currId |> getClosestPrecedingNode |> getWorkerById) 
-                    Async.RunSynchronously (closestPrecedingNode <? FindSuccessor(currId))
+                    reportProp($"^^^^^^^^findSuccessor currID={currId} closestPrecedingNode={closestPrecedingNode}")
+                    Async.RunSynchronously (closestPrecedingNode <? FindSuccessor(currId),500)
             let findSuccessorAndCnt tId oId jNum = 
                 if (checkWithin tId id successor) then 
                     successor |> getWorkerById <! Request(tId, oId, jNum + 1)
@@ -173,8 +176,12 @@ let createWorker id =
                     // printfn $"next:{next}"
                     if next > F_TABLE_SIZE then next <- 1
                     findSuccessor (id + int64 (2. ** (float (next - 1))))
-                for _ in 1..F_TABLE_SIZE do 
+                    // Async.RunSynchronously(getWorkerById successor <? FindSuccessor((id + int64 (2. ** (float (next - 1))))))
+                reportProp($"----fixFingerTable")
+                for i in 1..F_TABLE_SIZE do 
+                    reportProp($"~~~~~~fixFingerTable i={i} next={next} fixFinger()={fixFinger()}")
                     finger <- finger@[(next, fixFinger())]
+                reportProp($"######fixFingerTable {finger}")
                 finger
             fingerTable <- fixFingerTable()
             
@@ -185,8 +192,10 @@ let createWorker id =
                 // while true do 
                     async {
                         stabilize()
+                        reportProp("check_after_stabilize")
                         fingerTable <- fixFingerTable()
-                        System.Threading.Thread.Sleep(generateRandom 1000 5000)
+                        reportProp("check_after_fix_ftable")
+                        // System.Threading.Thread.Sleep(generateRandom 1000 5000)
                         // getWorkerById id <! Update(id)
                         check ()
                     } |> Async.Start
@@ -219,6 +228,7 @@ let createWorker id =
                         // async {check()} |> ignore 
                     | FindSuccessor(currId) ->
                         if DEBUG then printerRef <! Print($"[DEBUG][FindSuccessor]: currId {currId}") 
+                        reportProp($"vvvvvvvvvFindSuccessor currId={currId}")
                         outBox <! findSuccessor currId
                     | Notify(predId) -> 
                         if true then printerRef <! Print($"[DEBUG][Notify]: change {id}'s pred to {predId}")
@@ -318,11 +328,18 @@ let createWorker id =
             loop()
         )
 
+
+// type Node() = 
+//     member val id = -1 with get, set
+//     member val succ = -1 with get, set
+//     member val pred = -1 with get, set
 let localActor (mailbox:Actor<_>) = 
     // let actorZero = createWorker 0
+
     let mutable completedLocalWorkerNum = 0
     let mutable localActorNum = 0
     let mutable totJumpNum = 0
+    // let mutable map = Map.empty // (id:(pred, succ))
 
 // Assign tasks to worker
     let rec loop () = actor {
