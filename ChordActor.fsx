@@ -23,7 +23,6 @@ type Information =
     | FindSuccessor of (int64)
     | CheckPredecessor of (int64)
     | Print of (string)
-    | RepProp of (string)
     | Alive of (string)
 
 let F_TABLE_SIZE = 32
