@@ -306,7 +306,6 @@ let createWorker id =
                         printfn $"[INFO]: Found requested resource' successor: {currId} for {id}"
                     | RepProp(msg) -> reportProp(msg)
                     | Alive(msg) -> 
-                        
                         async {
                             checkAlive(msg)
                             System.Threading.Thread.Sleep(1000)
