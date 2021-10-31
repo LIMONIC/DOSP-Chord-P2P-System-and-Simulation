@@ -34,7 +34,7 @@ The program prints the average number of hops (node connections) that have to be
 3. Calling the Stabilize method can maintain the successor node of the current node and the predecessor node of the successor node. First, the current node will ask whether the predecessor node of its successor node is itself. If not (indicating that there is a new node joining between the current node and the successor node), the current node will set the predecessor node of its successor node as its successor, and notify the new successor node. When the new successor receives the notification, it will set the current node as its predecessor. In this way, the position changes caused by the addition of new nodes can be maintained correctly.
 4. The `fix_fingertable` method will call the `findSuccessor` method to check the correctness of each finger[i] in the `fingertable` and update. Fig 2. is a sequence diagram for joining operations.
     
-    [Sequence diagram of adding a new node](https://lh5.googleusercontent.com/D1-4u7w4qPgxXD4FMtpJEyiYmpbOE43zBZyiuqRgSvPfys0s9ytq24qKOrjmUSKJiX--kkdKYgCrQHuN1rj0SZcp4OeKfz64FvWf4JWQEsWCGYOG3lAtHi8-MU7DRQjNM6ajWcAS)
+    ![Sequence diagram of adding a new node](https://github.com/LIMONIC/DOSP-Chord-P2P-System-and-Simulation/tree/dev/ty/img/image.png)
     
     Fig2. Sequence diagram of adding a new node N to an existing Chord network consisting of two nodes A and B.
     
