@@ -7,7 +7,7 @@ The main idea of DHT is that first, each file index is represented as a (K, V) p
 
 This project implements Chord protocol with AKKA[.](http://akka.net/)net's Actor model. It first dynamically joins new nodes into the network, then makes each node randomly search for a resource. The number of jumps are counted and calculated for an average value.
 
-# Usage**:**
+# Usage
 
 ```
 dotnet fsi --langversion:preview ChordActor.fsx <numNodes> <numRequests>
