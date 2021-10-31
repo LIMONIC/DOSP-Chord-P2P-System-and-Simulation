@@ -101,8 +101,10 @@ let createWorker id =
             let mutable predecessor = -1L
             let mutable successor = id;
             let mutable fingerTable = []
-            let timer = new Timers.Timer(50.) // 50ms
+            let timer = new Timers.Timer(1000.) // 50ms
+            let timerForCheck = new Timers.Timer(10.)
             let waitTime = Async.AwaitEvent (timer.Elapsed) |> Async.Ignore
+            let waitForCheck = Async.AwaitEvent (timer.Elapsed) |> Async.Ignore
             let checkWithin targetid startid endid = 
                 if startid > endid then
                     (targetid > startid && targetid <= CHORD_RING_SIZE - 1L) || (targetid >= 0L && targetid <= endid)
@@ -178,6 +180,7 @@ let createWorker id =
                 finger
             
             timer.Start()
+            timerForCheck.Start()
             // Periodically run stablize and fixFingerTable
             let rec check _ =
                     if debug then printerRef <! Print($"!!!{id} do CHECK!!!")
@@ -187,6 +190,7 @@ let createWorker id =
                         // reportProp("check_after_stabilize")
                         fingerTable <- fixFingerTable()
                         // reportProp("check_after_fix_ftable")
+                        // // Async.RunSynchronously waitForCheck 
                         System.Threading.Thread.Sleep(50)
                         check ()
                     } |> Async.Start
@@ -228,6 +232,7 @@ let createWorker id =
                             if detail then printerRef <! Print($"[Detail][Request] Node {id} is looking for node {key}..")
                             let self = getWorkerById id
                             self <! Request(key, id, 0) 
+                            System.Threading.Thread.Sleep(1000)
                     | Request(targetId, originId, jumpNum) ->
                         if debug then printerRef <! Print($"[DEBUG][Request]: myId {id}, targetId {targetId}, originId {originId}, jumpNum {jumpNum}")
                         if checkWithin targetId predecessor id then 
@@ -243,7 +248,7 @@ let createWorker id =
                     | Alive(msg) -> // For debug: report if the node is still alive.
                         async {
                             checkAlive(msg)
-                            System.Threading.Thread.Sleep(50)
+                            System.Threading.Thread.Sleep(1000)
                             getWorkerById id <! Alive(msg)
                         } |> Async.Start
                     | _ -> ()
@@ -262,9 +267,9 @@ let localActor (mailbox:Actor<_>) =
     // A set for nodes that will join to the network
     let mutable set = Set.empty // (id:(pred, succ))
 
-    let timer = new Timers.Timer(800.) 
+    let timer = new Timers.Timer(500.) 
     let waitTime = Async.AwaitEvent (timer.Elapsed) |> Async.Ignore
-    let timer2 = new Timers.Timer(8000.) 
+    let timer2 = new Timers.Timer(5000.) 
     let waitForStabilize = Async.AwaitEvent (timer2.Elapsed) |> Async.Ignore
     
     // Initilize finger table for node zero in two-node-network. This table should be correct.
@@ -319,6 +324,7 @@ let localActor (mailbox:Actor<_>) =
             // Join nodes to the network
             set |> Set.toSeq |> Seq.iteri (fun i x -> 
                 Async.RunSynchronously waitTime // Add waiting time for the network to stabilize
+                // System.Threading.Thread.Sleep(500)
                 printerRef <! Print($"[INFO]:Joining node {x}..")
                 let tem = createWorker (x |> int64)
                 tem <! Join(0L)
